@@ -202,7 +202,7 @@ public class DynaDude extends Game implements Listener
         if(event.getEntityType() != EntityType.PRIMED_TNT) return;
 
         GameRegion gameRegion = (GameRegion) getVariable("region");
-        if(!gameRegion.containsLocation(event.getLocation())) return;
+        if(!gameRegion.containsEntity(event.getEntity())) return;
 
         event.setCancelled(true);
 
