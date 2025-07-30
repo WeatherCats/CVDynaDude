@@ -1,12 +1,10 @@
 package org.cubeville.cvdynadude;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import org.bukkit.Bukkit;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.potion.PotionType;
 import org.bukkit.potion.PotionData;
@@ -33,6 +31,8 @@ import org.cubeville.cvgames.vartypes.GameVariableInt;
 import org.cubeville.cvgames.vartypes.GameVariableMaterial;
 import org.cubeville.cvgames.vartypes.GameVariableString;
 
+import javax.annotation.Nullable;
+
 // TODO: No winning
 // TODO: Barriers, otherwise players can hop and place tnt on other side
 //       and also can climb on pile
@@ -48,6 +48,8 @@ public class DynaDude extends Game implements Listener
     int initialTntCount = 1;
     int initialFuseTime = 100;
     int initialExplosionPower = 3;
+    
+    List<Player> remainingPlayers = new ArrayList<>();
 
     public DynaDude(String id, String arenaName) {
         super(id, arenaName);
@@ -63,7 +65,6 @@ public class DynaDude extends Game implements Listener
         addGameVariable("initial-count", new GameVariableInt());
         addGameVariable("initial-power", new GameVariableInt());
         addGameVariable("restore-arena-cmd", new GameVariableString());
-        addGameVariable("message-portal", new GameVariableString());
     }
 
     @Override
@@ -84,7 +85,24 @@ public class DynaDude extends Game implements Listener
 
     @Override
     public void onGameFinish() {
-
+        if(!remainingPlayers.isEmpty()) {
+            getState(remainingPlayers.get(0)).placement = remainingPlayers.size();
+        }
+        List<Player> sortedPlayers  = state.keySet().stream().sorted(Comparator.comparingInt(o -> getState(o).placement)).collect(Collectors.toList());
+        sendMessageToArena("§b§l--- FINAL RESULTS ---");
+        for (Player player : sortedPlayers) {
+            int placement = getState(player).placement;
+            int kills = getState(player).kills;
+            String message = "";
+            if (placement == 1) {
+                message = message + "§e§l#" + placement + "§f ";
+            } else {
+                message = message + "§7#" + placement + "§f ";
+            }
+            message = message + player.getName() + " §a\uD83D\uDCA5" + kills;
+            sendMessageToArena(message);
+        }
+        remainingPlayers.clear();
     }
     
     @Override
@@ -103,18 +121,13 @@ public class DynaDude extends Game implements Listener
         int pcount = 0;
         for(Player player: players) {
             state.put(player, new DynaDudeState(initialTntCount, initialFuseTime, initialExplosionPower));
+            remainingPlayers.add(player);
             player.teleport(spawns.get(pcount++));
             player.getInventory().setItem(0, new ItemStack(Material.TNT, initialTntCount));
-            player.getInventory().setItem(7, getPotion(PotionType.SPEED, 1));
-            player.getInventory().setItem(8, getPotion(PotionType.STRENGTH, initialExplosionPower));
+            player.getInventory().setItem(7, new ItemStack(Material.SUGAR, 1));
+            player.getInventory().setItem(8, new ItemStack(Material.GUNPOWDER, initialExplosionPower));
         }
 
-    }
-
-    private void message(String title, String subtitle) {
-        String portalName = (String) getVariable("message-portal");
-        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "cvportal sendtitle " + portalName + " \"" + title + "\" \"" + subtitle + "\" 20 40 20");
-        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "cvportal sendmessage " + portalName + " \"" + title + " &r- " + subtitle + "\"");
     }
     
     class Splody {
@@ -158,6 +171,7 @@ public class DynaDude extends Game implements Listener
 
         DynaDudeState st = getState(event.getPlayer());
         if(st == null) return;
+        if (!st.isAlive) return;
 
         Location loc = event.getBlock().getLocation();
         event.getBlock().setType(Material.AIR);
@@ -186,15 +200,6 @@ public class DynaDude extends Game implements Listener
         }
         return totalCount;
     }
-
-    private ItemStack getPotion(PotionType type, int count)
-    {
-        ItemStack item = new ItemStack(Material.POTION, count);
-        PotionMeta meta = (PotionMeta) item.getItemMeta();
-        meta.setBasePotionData(new PotionData(type));
-        item.setItemMeta(meta);
-        return item;
-    }
     
     @EventHandler
     public void onEntityExplode(EntityExplodeEvent event) {
@@ -219,7 +224,7 @@ public class DynaDude extends Game implements Listener
         int y = loc.getBlockY();
         int z = loc.getBlockZ();
 
-        int c = 12;
+        int c = 13;
         Splody[] splodies = new Splody[c];
         // xdir = -1
         splodies[0] = new Splody(x, y, z, splodyPower, -1, 0);
@@ -237,6 +242,8 @@ public class DynaDude extends Game implements Listener
         splodies[9] = new Splody(x, y, z, splodyPower, 0, 1);
         splodies[10] = new Splody(x - 1, y, z, splodyPower, 0, 1);
         splodies[11] = new Splody(x + 1, y, z, splodyPower, 0, 1);
+        // center
+        splodies[12] = new Splody(x, y, z, 1, 0, 0);
 
         loc.getWorld().playSound(event.getEntity().getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 15.0f, 1.0f);
 
@@ -270,9 +277,19 @@ public class DynaDude extends Game implements Listener
                     }
 
                     for(Player p: playersToRemove) {
-                        p.setHealth(0); // TODO: deleting in an iteration
                         p.getInventory().clear();
-                        state.remove(p);
+                        getState(p).isAlive = false;
+                        if ((boolean) arena.getVariable("spectate-enabled")) {
+                            addSpectator(p);
+                        } else {
+                            p.teleport((Location) arena.getVariable("lobby"));
+                        }
+                        getState(p).placement = remainingPlayers.size();
+                        sendMessageToArena("§f" + p.getName() + " §ewas blown up by §f" + player.getName());
+                        if (p != player) {
+                            getState(player).kills++;
+                        }
+                        remainingPlayers.remove(p);
                     }
                 }
                 
@@ -300,14 +317,7 @@ public class DynaDude extends Game implements Listener
             if(remainingCount == 0) break;
         }
 
-        if(state.size() < 2) {
-            if(state.size() == 1) {
-                for(Player p: state.keySet())
-                    message("&aGame Over", "&e" + p.getName() + " &rwon DynaDude!");
-            }
-            else {
-                message("&aGame Over", "Nobody won.");
-            }
+        if(remainingPlayers.size() <= 1) {
             finishGame();
             return;
         }
@@ -327,19 +337,49 @@ public class DynaDude extends Game implements Listener
             }
 
             if(speed > 0) {
+                int initFuseTime = st.fuseTime;
                 st.fuseTime -= speed * 10;
                 if(st.fuseTime < 20) st.fuseTime = 20;
-                player.getInventory().setItem(7, getPotion(PotionType.SPEED, 11 - st.fuseTime / 10));
+                if (initFuseTime != st.fuseTime) {
+                    String message = "§a+" + ((initFuseTime - st.fuseTime) / 10) + " §fFuse Speed §7";
+                    if (st.fuseTime == 20) {
+                        message = message + "(" + (11 - st.fuseTime / 10) + ") §e§lMAX!";
+                    } else {
+                        message = message + "(" + (11 - st.fuseTime / 10) + ")";
+                    }
+                    player.sendMessage(message);
+                }
+                player.getInventory().setItem(7, new ItemStack(Material.SUGAR, 11 - st.fuseTime / 10));
             }
 
             if(power > 0) {
+                int initExplosionPower = st.explosionPower;
                 st.explosionPower += power;
                 if(st.explosionPower > 10) st.explosionPower = 10;
-                player.getInventory().setItem(8, getPotion(PotionType.STRENGTH, st.explosionPower));
+                if (initExplosionPower != st.explosionPower) {
+                    String message = "§a+" + (st.explosionPower - initExplosionPower) + " §fExplosion Power §7";
+                    if (st.explosionPower == 10) {
+                        message = message + "(" + st.explosionPower + ") §e§lMAX!";
+                    } else {
+                        message = message + "(" + st.explosionPower + ")";
+                    }
+                    player.sendMessage(message);
+                }
+                player.getInventory().setItem(8, new ItemStack(Material.GUNPOWDER, st.explosionPower));
             }
             
+            int initTNTCount = st.tntCount;
             st.tntCount += count;
             if(st.tntCount > 10) st.tntCount = 10;
+            if (initTNTCount != st.tntCount) {
+                String message = "§a+" + (st.tntCount - initTNTCount) + " §fTNT §7";
+                if (st.tntCount == 10) {
+                    message = message + "(" + st.tntCount + ") §e§lMAX!";
+                } else {
+                    message = message + "(" + st.tntCount + ")";
+                }
+                player.sendMessage(message);
+            }
 
             int tntCount = countItems(inventory, Material.TNT);
             int targetTntCount = st.tntCount - st.ownedTnt.size();
@@ -353,6 +393,17 @@ public class DynaDude extends Game implements Listener
                 inventory.setItem(0, new ItemStack(Material.AIR));
             else
                 inventory.setItem(0, new ItemStack(Material.TNT, slot0TargetCount));
+        }
+    }
+    
+    @EventHandler
+    public void onPlayerExplosionDamagae(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player)) return;
+        Player hit = (Player) event.getEntity();
+        if (getState(hit) == null) return;
+        
+        if (event.getCause() == EntityDamageEvent.DamageCause.BLOCK_EXPLOSION) {
+            event.setCancelled(true);
         }
     }
 }

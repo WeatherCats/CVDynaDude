@@ -16,6 +16,9 @@ public class DynaDudeState extends PlayerState {
     public int fuseTime;
     public int explosionPower;
     public int tntCount;
+    public boolean isAlive = true;
+    public int placement = -1;
+    public int kills = 0;
     public Set<TNTPrimed> ownedTnt = new HashSet<>();
     
     @Override
