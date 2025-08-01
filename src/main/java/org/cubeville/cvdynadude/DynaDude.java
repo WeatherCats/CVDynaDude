@@ -271,6 +271,9 @@ public class DynaDude extends Game implements Listener
                     List<Player> playersToRemove = new ArrayList<>();
                     
                     for(Player p: state.keySet()) {
+                        if (!getState(p).isAlive) {
+                            continue;
+                        }
                         if(horizontalDistance(p.getLocation(), bx + 0.5, bz + 0.5) < 0.5) {
                             playersToRemove.add(p);
                         }
@@ -316,13 +319,18 @@ public class DynaDude extends Game implements Listener
 
             if(remainingCount == 0) break;
         }
-
+        
         if(remainingPlayers.size() <= 1) {
             finishGame();
             return;
         }
 
         st = getState(player);
+        
+        if (!st.isAlive) {
+            return;
+        }
+        
         if(st != null) {
             Inventory inventory = player.getInventory();
 
